@@ -10,7 +10,11 @@ from PIL import Image
 import glob
 from torchsummary import summary
 from torchvision import datasets, transforms
-from AutoEncoder import AutoEncoder
+from ddqn_ae_esterno.AutoEncoder import AutoEncoder
+import warnings
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=UserWarning)
+
 
 # Hyperparameters
 one_hot = True
@@ -18,7 +22,7 @@ INPUT_SIZE = 8
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 if(one_hot):
-    code_size = 25
+    code_size = 300
     num_epochs = 200
     batch_size = 128
     lr = 1e-3
@@ -34,13 +38,13 @@ else:
     loss_fn = nn.L1Loss()
 # Load data
 
-f = open('feature_dataset/normalized_lunar.txt')
+f = open('feature_dataset/lunar.txt')
 line = f.readline()
 dataset = []
 
 while(line != ''):
     record = line.split(" ")
-    record.remove("\n")
+    #record.remove("\n")
     for r in record:
         r = float(r)
     dataset.append(np.asarray(record))
@@ -86,8 +90,8 @@ else:
     name = "clusters_mnist/minst_clusterer_conv.pt"
 
 torch.save(autoencoder.state_dict(), name)
-f = open("lunar_images/outs.txt", "w")
-f2 = open("lunar_images/ins.txt", "w")
+f = open("res/outs.txt", "w")
+f2 = open("res/ins.txt", "w")
 for _, images in enumerate(train_loader):  # Ignore image labels
     # print(images)
     images = images.to(device)

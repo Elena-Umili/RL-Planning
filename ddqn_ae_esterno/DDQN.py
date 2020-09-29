@@ -6,9 +6,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import gym
-from experience_replay_buf import experienceReplayBuffer
+from ddqn_ae_esterno.experience_replay_buf import experienceReplayBuffer
+from ddqn_ae_esterno.AutoEncoder import AutoEncoder
 import warnings
-from AutoEncoder import AutoEncoder
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -17,16 +17,18 @@ def normalize_vec(vec):
     max_vec = [0.99916536, 1.5253401, 3.9662757, 0.50701684, 2.3456542, 2.0852647, 1.0, 1.0]
     for i in range(len(vec)):
         vec[i] = (vec[i] - min_vec[i])/(max_vec[i] - min_vec[i])
+
         vec[i] = min(vec[i], 1)
         vec[i] = max(vec[i], 0)
+
     return vec
 
 class DDQNAgent:
 
     def __init__(self, env, network, buffer, epsilon=0.05, batch_size=32):
 
-        self.ae = AutoEncoder(25)
-        self.ae.load_state_dict(torch.load('lunar_models/code25.pt'))
+        self.ae = AutoEncoder(100)
+        self.ae.load_state_dict(torch.load('lunar_models/code100.pt'))
         self.env = env
         self.network = network
         self.target_network = deepcopy(network)
@@ -34,15 +36,17 @@ class DDQNAgent:
         self.epsilon = epsilon
         self.batch_size = batch_size
         self.window = 100
-        self.reward_threshold = 195  # Avg reward before CartPole is "solved"
+        self.reward_threshold = 140  # Avg reward before CartPole is "solved"
         self.initialize()
+        self.f = open("res/ddqn_ae_rw.txt", "w+")
 
     def take_step(self, mode='train'):
 
-        norm_s0 = normalize_vec(self.s_0)
+        #norm_s0 = normalize_vec(self.s_0)
 
-        ae_out, ae_code = self.ae(Variable(torch.from_numpy(norm_s0).to('cuda')), 100, 100, 50)
+        ae_out, ae_code = self.ae(Variable(torch.from_numpy(self.s_0).to('cuda')), 100, 100, 50)
         new_s = ae_code.detach().to('cpu').numpy()
+        #new_s = ae_out.detach().to('cpu').numpy()
 
         if mode == 'explore':
             action = self.env.action_space.sample()
@@ -51,11 +55,14 @@ class DDQNAgent:
             self.step_count += 1
         s_1, r, done, _ = self.env.step(action)
         self.rewards += r
-        norm_s1 = normalize_vec(s_1)
-        ae_out, ae_code = self.ae(Variable(torch.from_numpy(norm_s1).to('cuda')), 100, 100, 50)
+        #norm_s1 = normalize_vec(s_1)
+        ae_out, ae_code = self.ae(Variable(torch.from_numpy(s_1).to('cuda')), 100, 100, 50)
         new_s1 = ae_code.detach().to('cpu').numpy()
+        #new_s1 = ae_out.detach().to('cpu').numpy()
 
         self.buffer.append(new_s, action, r, done, new_s1)
+        #self.buffer.append(norm_s0, action, r, done, norm_s1)
+
         self.s_0 = s_1.copy()
         if done:
             self.s_0 = self.env.reset()
@@ -78,8 +85,10 @@ class DDQNAgent:
             self.rewards = 0
             done = False
             while done == False:
+                '''
                 if((ep % 50) == 0 ):
                     self.env.render()
+                '''
                 done = self.take_step(mode='train')
                 # Update network
                 if self.step_count % network_update_frequency == 0:
@@ -100,7 +109,7 @@ class DDQNAgent:
                     self.mean_training_rewards.append(mean_rewards)
                     print("\rEpisode {:d} Mean Rewards {:.2f}\t\t".format(
                         ep, mean_rewards), end="")
-
+                    self.f.write(str(mean_rewards)+"\n")
                     if ep >= max_episodes:
                         training = False
                         print('\nEpisode limit reached.')

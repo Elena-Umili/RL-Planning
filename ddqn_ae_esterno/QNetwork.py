@@ -6,10 +6,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import gym
-from experience_replay_buf import experienceReplayBuffer
+from ddqn_ae_esterno.experience_replay_buf import experienceReplayBuffer
 from collections import namedtuple, deque, OrderedDict
 import warnings
-
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -17,13 +16,14 @@ class QNetwork(nn.Module):
 
     def __init__(self, env, learning_rate=1e-3, n_hidden_layers=4,
                  n_hidden_nodes=256, bias=True, activation_function='relu',
-                 tau=1, device='cpu', *args, **kwargs):
+                 tau=1, device='cpu', norm_out = False, *args, **kwargs):
         super(QNetwork, self).__init__()
+        self.norm_out = norm_out
         self.device = device
         self.actions = np.arange(env.action_space.n)
         self.tau = tau
         #n_inputs = env.observation_space.shape[0] * tau
-        n_inputs = 25
+        n_inputs = 100
         self.n_inputs = n_inputs
         n_outputs = env.action_space.n
 
@@ -66,6 +66,8 @@ class QNetwork(nn.Module):
             else:
                 layers[str(i)] = act_func
 
+        if(norm_out):
+            layers[n_layers] = nn.Sigmoid()
         self.network = nn.Sequential(layers)
 
         # Set device for GPU's
@@ -75,7 +77,7 @@ class QNetwork(nn.Module):
         self.optimizer = torch.optim.Adam(self.parameters(),
                                           lr=learning_rate)
 
-    def get_action(self, state, epsilon=0.2):
+    def get_action(self, state, epsilon=0.05):
         if np.random.random() < epsilon:
             action = np.random.choice(self.actions)
         else:

@@ -10,6 +10,9 @@ from PIL import Image
 import glob
 from torchsummary import summary
 from torchvision import datasets, transforms
+import warnings
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=UserWarning)
 
 one_hot = True
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -20,16 +23,16 @@ class AutoEncoder(nn.Module):
         self.code_size = code_size
 
         # Encoder specification
-        self.enc_linear_1 = nn.Linear(INPUT_SIZE, 64).to(device)
-        self.enc_linear_2 = nn.Linear(64, 128).to(device)
-        self.enc_linear_3 = nn.Linear(128, 64).to(device)
-        self.enc_linear_4 = nn.Linear(64, self.code_size).to(device)
+        self.enc_linear_1 = nn.Linear(INPUT_SIZE, INPUT_SIZE*4).to(device)
+        self.enc_linear_2 = nn.Linear(INPUT_SIZE*4, INPUT_SIZE*16).to(device)
+        self.enc_linear_3 = nn.Linear(INPUT_SIZE*16, INPUT_SIZE*16).to(device)
+        self.enc_linear_4 = nn.Linear(INPUT_SIZE*16, self.code_size).to(device)
 
         # Decoder specification
-        self.dec_linear_1 = nn.Linear(self.code_size, 64).to(device)
-        self.dec_linear_2 = nn.Linear(64, 128).to(device)
-        self.dec_linear_3 = nn.Linear(128, 64).to(device)
-        self.dec_linear_4 = nn.Linear(64, INPUT_SIZE).to(device)
+        self.dec_linear_1 = nn.Linear(self.code_size, INPUT_SIZE*16).to(device)
+        self.dec_linear_2 = nn.Linear(INPUT_SIZE*16, INPUT_SIZE*8).to(device)
+        self.dec_linear_3 = nn.Linear(INPUT_SIZE*8, INPUT_SIZE*4).to(device)
+        self.dec_linear_4 = nn.Linear(INPUT_SIZE*4, INPUT_SIZE).to(device)
 
     def forward(self, images, epoch, n_epochs, clusters):
         code = self.encode(images)
@@ -58,7 +61,7 @@ class AutoEncoder(nn.Module):
         out = (self.dec_linear_1(code))
         out = F.selu(self.dec_linear_2(out))
         out = F.selu(self.dec_linear_3(out))
-        out = F.sigmoid(self.dec_linear_4(out))
+        out = (self.dec_linear_4(out))
         return out
 
 
