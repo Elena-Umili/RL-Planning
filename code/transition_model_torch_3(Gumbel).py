@@ -1,3 +1,9 @@
+######################## Transition Model 3 ##############################
+# Come il 2 ma l'encoder è un Gumbel-sogtmax activation variational encoder
+# => il codice è una matrice latent_size(N) x categorical_size(M) flattata, ossia abbiamo N vettori one-hot a M componenti
+
+# stato discreto: SI
+
 import random
 import numpy as np
 import torch
@@ -324,5 +330,42 @@ print(['%.0f' % zero[0,i] for i in range(zero.shape[1]) ])
 print(' ')
 one, q = enc(torch.ones(1, state_size), temp_min, True)
 print(['%.0f' % one[0,i] for i in range(one.shape[1]) ])
+
+
+##### scrivere action schema ####
+class ActionSchema:
+
+   def __init__(self):
+     self.actions = []
+
+   def add_action(a):
+     self.actions.append(a)
+
+   def __init__(self, transition_delta_model)
+
+class ActionStrips:
+
+   def __init__(self, name, pre, eff):
+     self.name = name
+     self.preconditions = pre
+     self.effects = eff
+
+   def __init__(self, prec_codes, delta_code):
+     #prec_codes: ?xcode_size numpy of all the codes that results in the same delta_code 
+
+   
+class Precondition:
+    def __init__(self, positive = [], negative = []):
+      self.positive = positive
+      self.negative = negative
+
+class Postcondition:
+   def __init__(self, add_sym = [], del_sym = []):
+     self.add_sym = add_sym
+     self.del_sym = del_sym
+
+
+
+
 
 

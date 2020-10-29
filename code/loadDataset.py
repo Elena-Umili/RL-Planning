@@ -198,6 +198,8 @@ def loadDatasetLL(what):
    if what == "actions":
      data = np.array(data)
      data =to_categorical(data)
+
+
    return data
 
 
@@ -208,6 +210,36 @@ def loadDatasetLL(what):
 def loadDatasetLLTransitions():
    states = loadDatasetLL("states")
    actions = loadDatasetLL("actions")
+
+
+   #normalization
+   
+   print("MAX state")
+   maxS = np.max(states, axis = 0)
+   print(maxS)
+   print("MIN state")
+   minS = np.min(states, axis = 0)
+   print(minS)
+   print("mean")
+   print(states.mean(axis=0))
+   print("var")
+   print(states.std(axis=0))
+   
+
+   states = (states - states.min(axis=0)) / (states.max(axis=0) - states.min(axis=0))
+   
+   print("MAX state")
+   maxS = np.max(states, axis = 0)
+   print(maxS)
+   print("MIN state")
+   minS = np.min(states, axis = 0)
+   print(minS)   
+   print("mean")
+   print(states.mean(axis=0))
+   print("var")
+   print(states.std(axis=0))
+    
+
    X = states[:-1]
    X_prime = states[1:]
    actions = actions[1:]

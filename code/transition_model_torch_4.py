@@ -1,9 +1,5 @@
-############## Secondo transition model #######################
-# Miglioramenti rispetto al primo: 
-### 1) ha un decoder dentro il transition model
-### 2) la loss contiene la differenza dei codici z_prime e z_prime_hat, dove il primo è calcolato come l'encoder di x_prime mentre il secondo come delta([encoder(x), action]) (come prima)
-### 3) z_prime_hat viene dato al decoder => la loss contiene anche il reconstruction error calcolato fra x_prime e decoder(z_prime_hat)
-###  => in questo modo non trova la soluzione degenere, (se i codici convergessero su un unico vettore il decoder non riuscirebbe a ricostruire lo stato)
+############## Transition Model 4 #######################
+# come il 2, ma con l'azione più in linea con 
 
 ### stato discreto: NO
 
@@ -82,46 +78,46 @@ class AE(nn.Module):
         out = self.decoder(code)
         return out
 
-class TransitionDelta(nn.Module):
+class TransformAction(nn.Module):
 
     def __init__(self, code_size, action_size):
         super().__init__()
         
         self.code_size = code_size
         self.action_size = action_size
-        input_size = code_size + action_size 
+        input_size = action_size 
 
         self.layer1 = nn.Linear(input_size , input_size*2).to(device)
         self.layer2 = nn.Linear(input_size*2, code_size).to(device)
 
-    def forward(self, z, action):
+    def forward(self, action):
        
         #print("z.shape ", z.shape)
         #print("action.shape ",action.shape)
-        cat =  torch.cat((z, action), 1)
+        #cat =  torch.cat((z, action), 1)
         #print(cat.shape)
-        delta_z = torch.sigmoid(  self.layer1(  cat )  )
-        delta_z = torch.tanh(  self.layer2(delta_z))
+        delta_a = torch.sigmoid(  self.layer1(  action )  )
+        delta_a = torch.tanh(  self.layer2(delta_a))
 
-        return delta_z
+        return delta_a
 
 class Transition(nn.Module):
 
-    def __init__(self, encoder, decoder, transition_delta):
+    def __init__(self, encoder, decoder, transform_action):
         super().__init__()
 
         self.encoder = encoder
         self.decoder = decoder
-        self.transition_delta = transition_delta
+        self.transform_action = transform_action
 
     def forward(self, x, action, x_prime, epoch, n_epochs):
 
         z = self.encoder(x, epoch, n_epochs)
         z_prime = self.encoder(x_prime, epoch, n_epochs)
 
-        delta_z = self.transition_delta(z, action)
+        delta_a = self.transform_action( action)
 
-        z_prime_hat = z + delta_z
+        z_prime_hat = z + delta_a
 
         x_prime_hat = self.decoder(z_prime_hat)
 
@@ -136,7 +132,7 @@ enc = Encoder(state_size, code_size)
 dec = Decoder(state_size, code_size)
 ae = AE(enc, dec)
 
-td = TransitionDelta(code_size, action_size)
+td = TransformAction(code_size, action_size)
 tr = Transition(enc, dec, td)
 
 loss_function = nn.MSELoss()
