@@ -10,8 +10,8 @@ from ddqn_ae_interno.experience_replay_buf import experienceReplayBuffer
 import random
 import warnings
 from ddqn_ae_interno.AutoEncoder import AutoEncoder,Encoder,Decoder
-from ddqn_ae_interno.Gumbel_AE import VAE_gumbel
-from ddqn_ae_interno.transition_model import Transition,TransitionDelta, Predictor
+from ddqn_ae_interno.Gumbel_AE import DecoderGumbel,EncoderGumbel
+from ddqn_ae_interno.transition_model import Transition,TransitionDelta
 from ddqn_ae_interno.QNetwork import QNetwork
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore", category=UserWarning)
@@ -42,18 +42,24 @@ class plan_node():
 class DDQNAgent:
 
     def __init__(self, env, buffer, epsilon=0.05, batch_size=32):
+        #ROBA DI GUMBEL
+        self.temp_max = 1
+        self.temp_min = 0.5
+        self.temperature = self.temp_max
+        self.batch_epochs = 10
+        self.ANNEAL_RATE = 0.07
+        self.categorical_size = 10
+        self.latent_size = 20
+        self.encoder = EncoderGumbel(8,categorical_size=self.categorical_size,latent_size=self.latent_size)
+        self.decoder = DecoderGumbel(input_size=8, code_size= self.categorical_size * self.latent_size)
 
-        self.encoder = Encoder(100)
-        self.decoder = Decoder(100)
-        self.ae = AutoEncoder(self.encoder,self.decoder, 100)
-        self.trans_delta = TransitionDelta(100,4)
+        self.trans_delta = TransitionDelta(self.categorical_size * self.latent_size,4)
         self.transition= Transition(self.encoder,self.decoder,self.trans_delta)
-        self.predictor = Predictor(self.trans_delta)
 
         #self.ae = VAE_gumbel(1.0)
         #self.ae.load_state_dict(torch.load('lunar_models/code_gumbel_mod1_no_norm.pt'))
         self.env = env
-        self.network = QNetwork(env=env, n_hidden_nodes=64, encoder=self.encoder)
+        self.network = QNetwork(env=env, n_hidden_nodes=256, encoder=self.encoder)
         self.f = open("res/planner_enc_DDQN.txt", "a+")
         self.target_network = deepcopy(self.network)
         self.buffer = buffer
@@ -64,9 +70,11 @@ class DDQNAgent:
         self.initialize()
         self.action = 0
         self.temp_s1 = 0
+        self.step_count = 0
+        self.cum_rew = 0
 
-    def planner_action(self, depth=2):
-        if np.random.random() < 0.3:
+    def planner_action(self, depth=1):
+        if np.random.random() < 0.1:
             return np.random.choice(4)
 
         origin_code = self.encoder(torch.from_numpy(self.s_0),50,50)
@@ -83,8 +91,9 @@ class DDQNAgent:
         for i in range(depth):
             for n in old_vec:
                 for a in range(4):
-                    a_ = torch.from_numpy(to_categorical(a,4))
-                    new_code = self.trans_delta(n.code_state, a_)
+                    a_ = torch.FloatTensor(to_categorical(a,4)).to('cuda')
+                    pred_state = torch.cat((n.code_state, a_), 0)
+                    new_code = self.predictor(pred_state)
                     new_value = n.value + self.network.get_enc_value(new_code)
                     new_node = plan_node(new_code,new_value)
                     new_node.action_vec.append(a)
@@ -106,25 +115,26 @@ class DDQNAgent:
         #print(max_ind)
         return old_vec[max_ind].action_vec[-2]
 
-
-
+    def is_diff(self, s1, s0):
+        for i in range(len(s0)):
+            if(s0[0][i] != s1[0][i]):
+                return True
+        return False
 
     def take_step(self, mode='train'):
 
         s_1, r, done, _ = self.env.step(self.action)
-
-        if(self.step_count % 2 == 0):
-            '''
-            print("#########################")
-            print("s0 = " + str(self.s_0))
-            print("s1 = " + str(s_1))
-            print("_________________________")
-            '''
+        self.cum_rew += r
+        enc_s1, _ = self.encoder(torch.from_numpy(np.asarray([s_1])).to('cuda'), self.temperature, False)
+        enc_s0, _ = self.encoder(torch.from_numpy(np.asarray([self.s_0])).to('cuda'), self.temperature,False)
+        if(self.is_diff(enc_s0, enc_s1)):
             self.buffer.append(self.s_0, self.action, r, done, s_1)
+            self.cum_rew = 0
+
             if mode == 'explore':
                 self.action = self.env.action_space.sample()
             else:
-                self.action = self.network.get_action(self.s_0, epsilon=self.epsilon)
+                self.action = self.network.get_action(self.s_0, temperature=self.temperature)
                 #self.action = self.planner_action()
 
 
@@ -139,10 +149,10 @@ class DDQNAgent:
 
 
     # Implement DQN training algorithm
-    def train(self, gamma=0.99, max_episodes=10000,
+    def train(self, gamma=0.99, max_episodes=1000,
               batch_size=32,
               network_update_frequency=4,
-              network_sync_frequency=2000):
+              network_sync_frequency=200):
         self.gamma = gamma
         # Populate replay buffer
         while self.buffer.burn_in_capacity() < 1:
@@ -192,73 +202,71 @@ class DDQNAgent:
 
     def calculate_loss(self, batch):
 
-        loss_function = nn.MSELoss()
         states, actions, rewards, dones, next_states = [i for i in batch]
         rewards_t = torch.FloatTensor(rewards).to(device=self.network.device).reshape(-1, 1)
         actions_t = torch.LongTensor(np.array(actions)).reshape(-1, 1).to(
             device=self.network.device)
         dones_t = torch.ByteTensor(dones).to(device=self.network.device)
 
-        qvals = torch.gather(self.network.get_qvals(states), 1, actions_t)
+        ###############
+        # DDQN Update #
+        ###############
+        self.temperature = self.temp_max
+        for ep in range(self.batch_epochs):
+            qvals = torch.gather(self.network.get_qvals(states, self.temperature).to('cpu'), 1, actions_t)
+            next_actions = torch.max(self.network.get_qvals(next_states, self.temperature).to('cpu'), dim=-1)[1]
+            next_actions_t = torch.LongTensor(next_actions).reshape(-1, 1).to(
+                device=self.network.device)
+            target_qvals = self.target_network.get_qvals(next_states, self.temperature).to('cpu')
+            qvals_next = torch.gather(target_qvals, 1, next_actions_t).detach()
+            ###############
+            qvals_next[dones_t] = 0  # Zero-out terminal states
+            expected_qvals = self.gamma * qvals_next + rewards_t
+            loss = nn.MSELoss()(qvals, expected_qvals)
+            loss.backward()
+            self.network.optimizer.step()
+            self.temperature = np.maximum(self.temperature * np.exp(-self.ANNEAL_RATE * ep), self.temp_min)
 
-        #################################################################
-        # DDQN Update
-        next_actions = torch.max(self.network.get_qvals(next_states), dim=-1)[1]
-        next_actions_t = torch.LongTensor(next_actions).reshape(-1, 1).to(
-            device=self.network.device)
-        target_qvals = self.target_network.get_qvals(next_states)
-        qvals_next = torch.gather(target_qvals, 1, next_actions_t).detach()
-        #################################################################
-        qvals_next[dones_t] = 0  # Zero-out terminal states
-        expected_qvals = self.gamma * qvals_next + rewards_t
-        loss = nn.MSELoss()(qvals, expected_qvals)
-
-        #return loss, pred_loss
         return loss
-    def calculate_pred_loss(self, batch):
+
+    def pred_update(self, batch):
         loss_function = nn.MSELoss()
         states, actions, rewards, dones, next_states = [i for i in batch]
-        pred_loss = 0
-        rec_loss = 0
-        for i in range(16):
-            state = torch.from_numpy(np.asarray(states[i]))
-            _action = torch.from_numpy(to_categorical(actions[i],4))
-            next_state = torch.from_numpy(np.asarray(next_states[i]))
-            enc_state = self.encoder(state, 50, 50)
-            enc_nxt_state = self.encoder(next_state, 50, 50)
-            #print("state = " + str(enc_state))
-            #print("next_state = " + str(enc_nxt_state))
-            out = self.trans_delta(enc_state, _action)
-            #diff, x_prime_hat, z_prime_hat = self.transition(state,_action,next_state, 50,50)
-            #target_z = torch.zeros(100).to('cuda')
-            #pred_loss = pred_loss + loss_function(diff, target_z) + 2* loss_function(x_prime_hat, next_state.to('cuda'))
-            pred_loss = pred_loss + loss_function(out, enc_nxt_state)
-            rec, code = self.ae(state,10,50)
+        cat_actions = []
 
-            rec_loss = rec_loss + loss_function(rec.to('cpu'),state)
-            print("rec = " + str(rec))
-            print("state = " + str(state))
+        #modifica struttura actions
+        for act in actions:
+            cat_actions.append(np.asarray(to_categorical(act,4)))
+        cat_actions = np.asarray(cat_actions)
+        a_t = torch.FloatTensor(cat_actions).to('cuda')
 
+        #Modifiche struttura states
+        if type(states) is tuple:
+            states = np.array([np.ravel(s) for s in states])
+        states = torch.FloatTensor(states).to('cuda')
 
-        return pred_loss, rec_loss
+        # Modifiche struttura states
+        if type(next_states) is tuple:
+            next_states = np.array([np.ravel(s) for s in next_states])
+        next_states = torch.FloatTensor(next_states).to('cuda')
+
+        self.temperature = self.temp_max
+        for ep in range(self.batch_epochs):
+            error_z, x_prime_hat, qy, qy_prime = self.transition(states, a_t, next_states, self.temperature, False)
+            L = self.transition.loss_function_transition(error_z,next_states,x_prime_hat,qy)
+            L.backward()
+            self.transition.optimizer.step()
+            self.temperature = np.maximum(self.temperature * np.exp(-self.ANNEAL_RATE * ep), self.temp_min)
+
+        return
 
     def update(self):
         self.network.optimizer.zero_grad()
         batch = self.buffer.sample_batch(batch_size=self.batch_size)
         loss = self.calculate_loss(batch)
-        loss.backward()
-        self.network.optimizer.step()
 
         batch2 = self.buffer.sample_batch(batch_size=self.batch_size)
-        pred_loss,rec_loss = self.calculate_pred_loss(batch2)
-        print("pred loss = " + str(pred_loss))
-        print("rec loss = " + str(rec_loss))
-        self.trans_delta.optimizer.zero_grad()
-        self.ae.optimizer.zero_grad()
-        pred_loss.backward()
-        rec_loss.backward()
-        self.trans_delta.optimizer.step()
-        self.ae.optimizer.step()
+        self.pred_update(batch2)
 
         if self.network.device == 'cuda':
             self.update_loss.append(loss.detach().cpu().numpy())

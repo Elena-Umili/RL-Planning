@@ -10,14 +10,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 import numpy as np
 from ddqn_ae_interno.QNetwork import QNetwork
 from ddqn_ae_interno.experience_replay_buf import experienceReplayBuffer
-from ddqn_ae_interno.Gumbel_AE import VAE_gumbel
+
 import warnings
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore", category=UserWarning)
 
 
 
-er_buf = experienceReplayBuffer()
+er_buf = experienceReplayBuffer(burn_in=1000)
 env = gym.make('LunarLander-v2')
 ddqn = DDQNAgent(env=env, buffer=er_buf, batch_size=64 )
 ddqn.train()

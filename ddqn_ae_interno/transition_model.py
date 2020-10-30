@@ -4,12 +4,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from ddqn_ae_interno.AutoEncoder import Encoder,Decoder,AutoEncoder
+
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-
-
 
 class TransitionDelta(nn.Module):
 
@@ -22,38 +19,28 @@ class TransitionDelta(nn.Module):
 
         self.layer1 = nn.Linear(input_size, input_size * 2).to(device)
         self.layer2 = nn.Linear(input_size * 2, code_size).to(device)
-        self.optimizer = torch.optim.Adam(self.parameters(),
-                                          lr=0.001)
 
     def forward(self, z, action):
-        #print("z.shape ", z.shape)
-        #print("action.shape ",action.shape)
-        action = action.type(torch.float32).to('cuda')
-        cat = torch.cat((z, action), -1)
-        # print(cat.shape)
+        cat = torch.cat((z, action), 1)
         delta_z = torch.sigmoid(self.layer1(cat))
         delta_z = torch.tanh(self.layer2(delta_z))
-        z_prime = z + delta_z
-        y = torch.ones(self.code_size).to(device)
-        x = torch.zeros(self.code_size).to(device)
-        z_prime = z_prime.where(z_prime < 1.0, y)
-        z_prime = z_prime.where(z_prime >= 0.0, x)
-        return z_prime
+
+        return delta_z
 
 
 class Transition(nn.Module):
 
     def __init__(self, encoder, decoder, transition_delta):
         super().__init__()
+        self.categorical_size = 10
         self.encoder = encoder
         self.decoder = decoder
         self.transition_delta = transition_delta
-        self.optimizer = torch.optim.Adam(self.parameters(),
-                                          lr=0.001)
+        self.optimizer = optim.Adam(self.parameters(), lr=0.0001)
 
-    def forward(self, x, action, x_prime, epoch, n_epochs):
-        z = self.encoder(x, epoch, n_epochs)
-        z_prime = self.encoder(x_prime, epoch, n_epochs)
+    def forward(self, x, action, x_prime, temp, hard):
+        z, qy = self.encoder(x, temp, hard)
+        z_prime, qy_prime = self.encoder(x_prime, temp, hard)
 
         delta_z = self.transition_delta(z, action)
 
@@ -61,27 +48,16 @@ class Transition(nn.Module):
 
         x_prime_hat = self.decoder(z_prime_hat)
 
-        return z_prime_hat - z_prime, x_prime_hat, z_prime_hat
+        error_z = z_prime_hat - z_prime
 
-class Predictor(nn.Module):
-    def __init__(self, trans_delta):
-        super().__init__()
-        self.delta = trans_delta
-    def forward(self, x, a):
-        out = self.delta(x,a)
-        return out
+        return error_z, x_prime_hat, qy, qy_prime
 
+    def loss_function_transition(self, error_z, x_prime, recon_x_prime, qy):
+        # BCE = F.binary_cross_entropy(recon_x, x.view(-1, state_size), size_average=False) / x.shape[0]
+        l = nn.MSELoss()
+        RE = l(recon_x_prime, x_prime)
+        E = torch.norm(error_z)
+        log_ratio = torch.log(qy * self.categorical_size + 1e-20)
+        KLD = torch.sum(qy * log_ratio, dim=-1).mean()
 
-
-
-########################## Sizes
-state_size = 8
-action_size = 4
-code_size = 100
-
-'''
-loss_function = nn.MSELoss()
-# loss_function = nn.L1Loss()
-optimizerTR = optim.SGD(tr.parameters(), lr=0.01)
-optimizerAE = optim.Adam(ae.parameters(), lr=0.0001)
-'''
+        return RE + KLD + E

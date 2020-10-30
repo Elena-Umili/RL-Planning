@@ -1,84 +1,39 @@
+######################## Transition Model 3 ##############################
+# Come il 2 ma l'encoder è un Gumbel-sogtmax activation variational encoder
+# => il codice è una matrice latent_size(N) x categorical_size(M) flattata, ossia abbiamo N vettori one-hot a M componenti
+
+# stato discreto: SI
+
 import random
 import numpy as np
 import torch
-from torch.autograd import Variable
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import torchvision
-import argparse
-
-BATCH_SIZE = 100
-EPOCHS = 50
-CUDA = False
-TEMP = 1.0
-SEED = 1
-LOG_INTERVAL = 10
-HARD = True
-INPUT_SIZE = 8
-latent_dim = 10
-categorical_dim = 10  # one-of-K vector
-class VAE_gumbel_enc(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.enc_linear_1 = nn.Linear(INPUT_SIZE, INPUT_SIZE * 4).to('cpu')
-        self.enc_linear_2 = nn.Linear(INPUT_SIZE * 4, INPUT_SIZE * 16).to('cpu')
-        self.enc_linear_3 = nn.Linear(INPUT_SIZE * 16, INPUT_SIZE * 16).to('cpu')
-        self.enc_linear_4 = nn.Linear(INPUT_SIZE * 16, latent_dim * categorical_dim).to('cpu')
-
-    def forward(self, x, temp, hard):
-        code = (self.enc_linear_1(x))
-        code = F.selu(self.enc_linear_2(code))
-        code = F.selu(self.enc_linear_3(code))
-        code = F.selu(self.enc_linear_4(code))
-        #print(code.size())
-        q_y = code.view(code.size(), latent_dim, categorical_dim).to('cpu')
-        z = gumbel_softmax(code, temp, hard).to('cpu')
-
-        return code, q_y, z
-
-class VAE_gumbel_dec(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.dec_linear_1 = nn.Linear(latent_dim * categorical_dim, INPUT_SIZE * 16).to('cpu')
-        self.dec_linear_2 = nn.Linear(INPUT_SIZE * 16, INPUT_SIZE * 8).to('cpu')
-        self.dec_linear_3 = nn.Linear(INPUT_SIZE * 8, INPUT_SIZE * 4).to('cpu')
-        self.dec_linear_4 = nn.Linear(INPUT_SIZE * 4, INPUT_SIZE).to('cpu')
-        self.relu = nn.ReLU()
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, z):
-        out = (self.dec_linear_1(z))
-        out = F.selu(self.dec_linear_2(out))
-        out = F.selu(self.dec_linear_3(out))
-        out = (self.dec_linear_4(out))
-
-        return (out)
 
 
-class VAE_gumbel(nn.Module):
-    def __init__(self, temp, encoder, decoder):
-        super(VAE_gumbel, self).__init__()
-        self.encoder = encoder
-        self.decoder = decoder
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def forward(self, x, temp, hard, epoch, n_epochs):
-        q,q_y,z = self.encoder(x.view(-1, INPUT_SIZE), temp, hard)
+########################## Sizes
+state_size = 8
+action_size = 4
+latent_size = 20
+categorical_size = 10
+code_size = latent_size * categorical_size
+
+temp_min = 0.5
+ANNEAL_RATE = 0.00003
 
 
-        return self.decoder(z), F.softmax(q_y, dim=-1).reshape(*q.size()),z
-
-
-
+########################## Gumbel
 def sample_gumbel(shape, eps=1e-20):
     U = torch.rand(shape)
-    if CUDA:
-        U = U.cuda()
+    U.to(device)
     return -torch.log(-torch.log(U + eps) + eps)
 
 
 def gumbel_softmax_sample(logits, temperature):
-    y = logits.to('cpu') + sample_gumbel(logits.size()).to('cpu')
+    y = logits.to('cuda') + sample_gumbel(logits.size()).to('cuda')
     return F.softmax(y / temperature, dim=-1)
 
 
@@ -91,7 +46,7 @@ def gumbel_softmax(logits, temperature, hard=False):
     y = gumbel_softmax_sample(logits, temperature)
 
     if not hard:
-        return y.view(-1, latent_dim * categorical_dim)
+        return y.view(-1, latent_size * categorical_size)
 
     shape = y.size()
     _, ind = y.max(dim=-1)
@@ -100,5 +55,60 @@ def gumbel_softmax(logits, temperature, hard=False):
     y_hard = y_hard.view(*shape)
     # Set gradients w.r.t. y_hard gradients w.r.t. y
     y_hard = (y_hard - y).detach() + y
-    return y_hard.view(-1, latent_dim * categorical_dim)
+    return y_hard.view(-1, latent_size * categorical_size)
 
+
+class EncoderGumbel(nn.Module):
+
+    def __init__(self, input_size, latent_size, categorical_size):
+        super().__init__()
+
+        self.input_size = input_size
+        code_size = latent_size * categorical_size
+        self.code_size = code_size
+        self.latent_size = latent_size
+        self.categorical_size = categorical_size
+
+        self.layer1 = nn.Linear(input_size, input_size * 2).to(device)
+        self.layer2 = nn.Linear(input_size * 2, input_size * 4).to(device)
+        self.layer3 = nn.Linear(input_size * 4, input_size * 16).to(device)
+        self.layer4 = nn.Linear(input_size * 16, code_size).to(device)
+
+    def encode(self, x):
+        x = x.to(device)
+        z = torch.relu(self.layer1(x))
+        z = torch.relu(self.layer2(z))
+        z = torch.relu(self.layer3(z))
+        z = torch.relu(self.layer4(z))
+
+        return z
+
+    def forward(self, x, temp, hard):
+        q = self.encode(x)
+        q_y = q.view(q.size(0), latent_size, categorical_size)
+        z = gumbel_softmax(q_y, temp, hard)
+
+        return z, F.softmax(q_y, dim=-1).reshape(*q.size())
+
+
+class DecoderGumbel(nn.Module):
+    def __init__(self, input_size, code_size):
+        super().__init__()
+
+        self.input_size = input_size
+        self.code_size = code_size
+
+        self.layer1 = nn.Linear(code_size, input_size * 16).to(device)
+        self.layer2 = nn.Linear(input_size * 16, input_size * 4).to(device)
+        self.layer3 = nn.Linear(input_size * 4, input_size * 2).to(device)
+        self.layer4 = nn.Linear(input_size * 2, input_size).to(device)
+
+    def forward(self, z):
+        # print("x.shape ", x.shape)
+
+        x = torch.relu(self.layer1(z))
+        x = torch.relu(self.layer2(x))
+        x = torch.relu(self.layer3(x))
+        x = torch.sigmoid(self.layer4(x))
+
+        return x
