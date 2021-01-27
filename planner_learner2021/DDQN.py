@@ -49,7 +49,7 @@ class DDQNAgent:
         self.ANNEAL_RATE = 0.015
         self.categorical_size = 10
         self.latent_size = 50
-        self.action_size = 2
+        self.action_size = 3
         '''
         self.encoder = Encoder(200)
         self.decoder = Decoder(200)
@@ -71,7 +71,7 @@ class DDQNAgent:
         self.epsilon = epsilon
         self.batch_size = 64
         self.window = 20
-        self.reward_threshold = 198  # Avg reward before LL is "solved"
+        self.reward_threshold = -120  # Avg reward before LL is "solved"
         self.initialize()
         self.action = 0
         self.temp_s1 = 0

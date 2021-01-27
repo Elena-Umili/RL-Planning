@@ -14,7 +14,7 @@ with warnings.catch_warnings():
 
 
 er_buf = experienceReplayBuffer(burn_in=1000)
-env = gym.make("CartPole-v0")
+env = gym.make("Acrobot-v1")
 '''
 env = DuckietownEnv(
         seed=123,  # random seed

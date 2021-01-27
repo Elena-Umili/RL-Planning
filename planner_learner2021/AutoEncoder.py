@@ -60,4 +60,7 @@ class AutoEncoder(nn.Module):
         return out, code
 
 
-INPUT_SIZE = 4
+INPUT_SIZE = 6
+
+
+
